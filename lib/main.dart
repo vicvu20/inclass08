@@ -1,122 +1,334 @@
 import 'package:flutter/material.dart';
 
-void main() {
+import 'database/database_helper.dart';
+import 'repositories/folder_repository.dart';
+import 'repositories/card_repository.dart';
+import 'models/folder.dart';
+import 'models/card.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await DatabaseHelper.instance.database;
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Card Organizer',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true),
+      home: const FoldersScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class FoldersScreen extends StatefulWidget {
+  const FoldersScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<FoldersScreen> createState() => _FoldersScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _FoldersScreenState extends State<FoldersScreen> {
+  final FolderRepository _folderRepo = FolderRepository();
+  final CardRepository _cardRepo = CardRepository();
 
-  void _incrementCounter() {
+  List<Folder> _folders = [];
+  final Map<int, int> _cardCounts = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFolders();
+  }
+
+  Future<void> _loadFolders() async {
+    setState(() => _loading = true);
+
+    final folders = await _folderRepo.getAllFolders();
+    final Map<int, int> counts = {};
+
+    for (final f in folders) {
+      if (f.id == null) continue;
+      counts[f.id!] = await _cardRepo.getCardCountByFolder(f.id!);
+    }
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _folders = folders;
+      _cardCounts
+        ..clear()
+        ..addAll(counts);
+      _loading = false;
     });
+  }
+
+  IconData _getSuitIcon(String suit) {
+    switch (suit) {
+      case 'Hearts':
+        return Icons.favorite;
+      case 'Diamonds':
+        return Icons.diamond;
+      case 'Clubs':
+        return Icons.local_florist;
+      case 'Spades':
+        return Icons.change_history; // ✅ no Icons.spade in Flutter
+      default:
+        return Icons.folder;
+    }
+  }
+
+  Color? _getSuitColor(String suit) {
+    switch (suit) {
+      case 'Hearts':
+      case 'Diamonds':
+        return Colors.red;
+      case 'Clubs':
+      case 'Spades':
+        return Colors.black;
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _deleteFolder(Folder folder) async {
+    if (folder.id == null) return;
+
+    final count = _cardCounts[folder.id!] ?? 0;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Folder?'),
+        content: Text(
+          'Delete "${folder.folderName}"?\n\n'
+          'This will also delete $count cards in this folder (CASCADE).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _folderRepo.deleteFolder(folder.id!);
+      await _loadFolders();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted ${folder.folderName}')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Card Organizer'),
+        actions: [
+          IconButton(
+            onPressed: _loadFolders,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 0.95, // ✅ taller so it fits better
+              ),
+              itemCount: _folders.length,
+              itemBuilder: (context, index) {
+                final folder = _folders[index];
+                final count =
+                    (folder.id == null) ? 0 : (_cardCounts[folder.id!] ?? 0);
+
+                return Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CardsScreen(folder: folder),
+                        ),
+                      );
+                      await _loadFolders();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      // ✅ Fix overflow: allow scroll + keep centered when it fits
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return SingleChildScrollView(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    _getSuitIcon(folder.folderName),
+                                    size: 44, // ✅ smaller
+                                    color: _getSuitColor(folder.folderName),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    folder.folderName,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 16, // ✅ smaller
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '$count cards',
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  IconButton(
+                                    onPressed: () => _deleteFolder(folder),
+                                    icon: const Icon(Icons.delete_outline),
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    tooltip: 'Delete folder',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
+    );
+  }
+}
+
+class CardsScreen extends StatefulWidget {
+  final Folder folder;
+  const CardsScreen({super.key, required this.folder});
+
+  @override
+  State<CardsScreen> createState() => _CardsScreenState();
+}
+
+class _CardsScreenState extends State<CardsScreen> {
+  final CardRepository _cardRepo = CardRepository();
+  List<PlayingCard> _cards = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCards();
+  }
+
+  Future<void> _loadCards() async {
+    setState(() => _loading = true);
+    final folderId = widget.folder.id!;
+    final cards = await _cardRepo.getCardsByFolderId(folderId);
+    setState(() {
+      _cards = cards;
+      _loading = false;
+    });
+  }
+
+  Future<void> _deleteCard(PlayingCard card) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Card?'),
+        content: Text('Delete "${card.cardName}" from ${card.suit}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
+    );
+
+    if (confirmed == true) {
+      await _cardRepo.deleteCard(card.id!);
+      await _loadCards();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted ${card.cardName}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.folder.folderName)),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.separated(
+              padding: const EdgeInsets.all(12),
+              itemCount: _cards.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final c = _cards[index];
+                return Card(
+                  child: ListTile(
+                    leading: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: (c.imageUrl == null || c.imageUrl!.isEmpty)
+                          ? const Icon(Icons.image_not_supported)
+                          : ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                c.imageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const Icon(Icons.broken_image),
+                              ),
+                            ),
+                    ),
+                    title: Text(c.cardName),
+                    subtitle: Text(c.suit),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteCard(c),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
